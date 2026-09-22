@@ -18,18 +18,18 @@ Most browser extensions that monitor web activity operate as surveillance tools�
 
 When you browse the internet with ERE installed, **your browsing history is NOT sent to our servers.**
 
-1. **Offline Registry**: ERE ships with an offline, local registry of domains matching the 8 Elon Report Pillars (Autonomous Vehicles, Robotics, AI, Space, Energy, TSLA/Equities, Crypto/Mining, and Digital Town Square).
+1. **Offline Registry**: ERE ships with an offline, local registry of domains matching the 9 Elon Report Pillars (Autonomous Vehicles, Robotics, AI, Space, Politics, Energy, TSLA/Equities, Crypto/Mining, and Digital Town Square).
 2. **Local Evaluation**: Every URL you visit is evaluated **entirely on your local machine** inside the extension’s sandboxed service worker.
 3. **Untracked Domains (The 99.9%)**:
-   - If a domain does **not** match one of the 8 Pillars (e.g., your bank, your email, news portals, personal search queries, private messaging, personal work), **NO network request is sent to our servers.**
-   - The domain is retained strictly in volatile browser RAM for 5 minutes solely so you can inspect it in **Tab 4 (Domain Telemetry Log)** to verify that it was evaluated locally and discarded.
+   - If a domain does **not** match one of the 9 Pillars (e.g., your bank, your email, news portals, personal search queries, private messaging, personal work), **NO network request is sent to our servers.**
+   - The domain is retained strictly in volatile browser RAM for 60 minutes solely so you can inspect it in **Tab 4 (Domain Telemetry Log)** to verify that it was evaluated locally and discarded.
    - It is never written to disk, never cached in persistent storage, and never transmitted over the internet.
 
 ---
 
 ## 3. What ERE Transmits (Tracked Pillar Domains Only)
 
-If and **only if** you visit a domain that matches one of the 8 curated Pillars (e.g., `bitcointalk.org`, `tesla.com`, `spacex.com`, `x.com`), ERE transmits a minimal telemetry payload stripped down strictly to root domain identifiers:
+If and **only if** you visit a domain that matches one of the 9 curated Pillars (e.g., `bitcointalk.org`, `tesla.com`, `spacex.com`, `x.com`), ERE transmits a minimal telemetry payload stripped down strictly to root domain identifiers:
 
 > 🔒 **WE DO NOT TRANSMIT PAGE URLS.**  
 > The browser address is stripped down to the root domain / base URL client-side before any network request is created. Full page paths, thread titles, post IDs, search queries, and parameter strings are **NEVER transmitted, NEVER received, and NEVER processed by our servers.**
@@ -38,7 +38,7 @@ If and **only if** you visit a domain that matches one of the 8 curated Pillars 
 | :--- | :--- | :--- |
 | **Client UUID** | Pseudonymous string (e.g. `ere_a1b2...`) | Credits merit points to your installation |
 | **Root Domain / Base URL** | Clean host only (e.g. `bitcointalk.org` — or `reddit.com/r/Bitcoin` for subreddits) | Calculates 24h aggregate category rankings |
-| **Pillar ID** | Integer (`1` to `8`) | Categorizes visit under the relevant Pillar |
+| **Pillar ID** | Integer (`1` to `9`) | Categorizes visit under the relevant Pillar (Pillar 5 Politics is optional) |
 
 ### Merit Gating
 Merit scoring is strictly capped at **1 point per domain per 24-hour period**. Repeated page views on the same domain increment total visit statistics for global analytics, but cannot be exploited to artificially inflate merit scores.
@@ -104,7 +104,7 @@ You can instantly pause all extension activity at any time:
 - When paused, the HUD shows `⏸`, and **zero telemetry is recorded or sent anywhere**.
 
 ### 🔍 Real-Time Audit Log (Tab 4: Privacy)
-ERE provides a live, rolling 5-minute telemetry log in the HUD:
+ERE provides a live, rolling 60-minute telemetry log in the HUD:
 - Every evaluated domain appears with its relative timestamp.
 - You can inspect exactly which sites were classified under a Pillar and which sites were discarded locally as Untracked.
 - **Top-of-List Consolidation**: Repeated refreshes or consecutive page visits on the same domain simply update the timestamp of the top record, rather than cluttering your log.

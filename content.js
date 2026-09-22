@@ -2,7 +2,8 @@
   if (window.__ERE_INITIALIZED__) return;
   window.__ERE_INITIALIZED__ = true;
 
-  const ERE_VERSION = chrome.runtime?.getManifest?.()?.version || "1.2";
+  const ERE_VERSION = chrome.runtime?.getManifest?.()?.version || "1.2.11";
+  const HUD_LOADING_HTML = `<svg class="ere-hud-spinner" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="rgba(201, 162, 39, 0.25)" stroke-width="2.2" /><path d="M14 8a6 6 0 0 0-6-6" stroke="#c9a227" stroke-width="2.2" stroke-linecap="round" /></svg>`;
 
   let state = {
     uuid: "loading...",
@@ -246,7 +247,6 @@
   criticalStyle.textContent = `
     .ere-modal-overlay:not(.is-open) { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
     .ere-modal-window:not(.is-open) { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
-    .ere-hud-pill:not(.is-ready) { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
     .ere-hud-pill {
       position: fixed !important;
       z-index: 2147483647 !important;
@@ -257,6 +257,19 @@
       max-width: 140px !important;
       height: 28px !important;
       padding: 0 !important;
+    }
+    .ere-hud-spinner {
+      display: inline-block !important;
+      width: 14px !important;
+      height: 14px !important;
+      min-width: 14px !important;
+      min-height: 14px !important;
+      animation: ere-hud-spin 0.85s linear infinite !important;
+      flex-shrink: 0 !important;
+    }
+    @keyframes ere-hud-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
   `;
   shadow.appendChild(criticalStyle);
@@ -279,8 +292,8 @@
     </div>
     <div class="ere-hud-divider"></div>
     <div class="ere-hud-right" id="ere-hud-right">
-      <div class="ere-hud-value">—</div>
-      <div class="ere-hud-tooltip ere-hud-tooltip-right"></div>
+      <div class="ere-hud-value">${HUD_LOADING_HTML}</div>
+      <div class="ere-hud-tooltip ere-hud-tooltip-right">Connecting to telemetry...</div>
     </div>
   `;
   root.appendChild(hud);
@@ -293,11 +306,25 @@
   modal.className = "ere-modal-window";
   root.appendChild(modal);
 
+  try {
+    const cachedPos = JSON.parse(localStorage.getItem("ere_hud_pos"));
+    if (cachedPos && !isNaN(cachedPos.x) && !isNaN(cachedPos.y)) {
+      if (cachedPos.y > window.innerHeight - 120 && cachedPos.x > window.innerWidth - 180) {
+        localStorage.removeItem("ere_hud_pos");
+      } else {
+        state.hudPosition = cachedPos;
+      }
+    }
+  } catch (e) {}
+  applyPosition(state.hudPosition);
+  updateHUD();
+
   function setGlobalVisits(newCount) {
     const n = parseInt(newCount, 10);
-    if (!isNaN(n) && n > (state.totalTrackedVisitors || 0)) {
+    if (!isNaN(n) && n > 0) {
+      const changed = (state.totalTrackedVisitors !== n);
       state.totalTrackedVisitors = n;
-      if ((state.hudDisplayMode || "total") === "total") {
+      if (changed && (state.hudDisplayMode || "total") === "total") {
         updateHUD();
       }
     }
@@ -305,11 +332,14 @@
 
   async function init() {
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: "GET_INITIAL_STATE",
-        hostname: window.location.hostname,
-        pathname: window.location.pathname
-      });
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({
+          type: "GET_INITIAL_STATE",
+          hostname: window.location.hostname,
+          pathname: window.location.pathname
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for background service worker")), 2500))
+      ]);
 
       if (response) {
         const initVisitors = parseInt(response.totalTrackedVisitors, 10) || 0;
@@ -421,7 +451,7 @@
 
   function startLiveTicker() {
     if (liveTickerInterval) clearInterval(liveTickerInterval);
-    liveTickerInterval = setInterval(() => {
+    const tick = () => {
       if (state.isPaused || document.hidden) return;
       const currentMode = state.hudDisplayMode || "total";
       if (currentMode === "total") {
@@ -431,7 +461,9 @@
           }
         });
       }
-    }, 2000);
+    };
+    tick();
+    liveTickerInterval = setInterval(tick, 2000);
   }
 
   async function fetchTrendData(range) {
@@ -488,13 +520,9 @@
     const catName = state.category ? (state.category.short_name || state.category.name) : null;
 
     if (leftTooltip) {
-      if (state.isPaused) {
-        leftTooltip.innerHTML = `<strong>${escapeHTML(domain)}</strong> (Paused) — Click to open`;
-      } else if (state.category) {
-        leftTooltip.innerHTML = `<strong>${escapeHTML(domain)}</strong> (${escapeHTML(catName)}) — Click to open`;
-      } else {
-        leftTooltip.innerHTML = `<strong>${escapeHTML(domain)}</strong> (Untracked) — Click to open`;
-      }
+      leftTooltip.textContent = state.isPaused
+        ? `Everything is ok v${ERE_VERSION} (Paused)`
+        : `Everything is ok v${ERE_VERSION}`;
     }
 
     if (state.isPaused) {
@@ -502,21 +530,33 @@
       if (rightTooltip) rightTooltip.textContent = "Tracking paused";
     } else if (isTotalMode) {
       const totalVisitors = state.totalTrackedVisitors || 0;
-      valEl.textContent = totalVisitors > 0 ? totalVisitors.toLocaleString() : "—";
-      if (rightTooltip) {
-        rightTooltip.innerHTML = `Total Tracked Visits: ${totalVisitors > 0 ? totalVisitors.toLocaleString() : "—"} (Click for 24h Unique Visitors)`;
+      if (totalVisitors > 0) {
+        valEl.textContent = totalVisitors.toLocaleString();
+        if (rightTooltip) {
+          rightTooltip.textContent = `Total Tracked Visits: ${totalVisitors.toLocaleString()}`;
+        }
+      } else {
+        valEl.innerHTML = HUD_LOADING_HTML;
+        if (rightTooltip) {
+          rightTooltip.textContent = "Connecting to telemetry...";
+        }
       }
     } else if (isUniqueMode) {
       if (state.category) {
         const visitors = state.ranking && state.ranking.unique_visitors_24h ? state.ranking.unique_visitors_24h : 1;
         valEl.textContent = `${visitors.toLocaleString()}`;
         if (rightTooltip) {
-          rightTooltip.innerHTML = `24h Unique Visitors: ${visitors.toLocaleString()} (Click for Domain Rank)`;
+          rightTooltip.textContent = `24h Unique Visitors: ${visitors.toLocaleString()}`;
+        }
+      } else if (state.category === null && state.uuid === "loading...") {
+        valEl.innerHTML = HUD_LOADING_HTML;
+        if (rightTooltip) {
+          rightTooltip.textContent = "Classifying domain...";
         }
       } else {
         valEl.textContent = "—";
         if (rightTooltip) {
-          rightTooltip.innerHTML = `Unique Visitors: — (Untracked domain - Click for Domain Rank)`;
+          rightTooltip.textContent = `Unique Visitors: — (Untracked domain)`;
         }
       }
     } else if (isRankMode) {
@@ -524,12 +564,17 @@
         const rankNum = state.ranking && state.ranking.rank ? state.ranking.rank : 1;
         valEl.textContent = `#${rankNum.toLocaleString()}`;
         if (rightTooltip) {
-          rightTooltip.innerHTML = `Rank #${rankNum.toLocaleString()} in ${escapeHTML(catName)} (Click for Total Visitors)`;
+          rightTooltip.textContent = `Rank #${rankNum.toLocaleString()} in ${catName}`;
+        }
+      } else if (state.category === null && state.uuid === "loading...") {
+        valEl.innerHTML = HUD_LOADING_HTML;
+        if (rightTooltip) {
+          rightTooltip.textContent = "Calculating ranking...";
         }
       } else {
         valEl.textContent = "—";
         if (rightTooltip) {
-          rightTooltip.innerHTML = `Rank: — (Untracked domain - Click for Total Visitors)`;
+          rightTooltip.textContent = `Rank: — (Untracked domain)`;
         }
       }
     }
@@ -546,7 +591,7 @@
     const maxTop = Math.max(10, window.innerHeight - height - 10);
 
     let left = pos && pos.x !== null && !isNaN(pos.x) ? pos.x : window.innerWidth - width - 24;
-    let top = pos && pos.y !== null && !isNaN(pos.y) ? pos.y : window.innerHeight - height - 80;
+    let top = pos && pos.y !== null && !isNaN(pos.y) ? pos.y : 24;
 
     left = Math.min(Math.max(10, left), maxLeft);
     top = Math.min(Math.max(10, top), maxTop);
@@ -562,6 +607,7 @@
   }
 
   function positionModal(hudLeft, hudTop) {
+    if (typeof modal === "undefined" || !modal) return;
     if (hudLeft === undefined || hudTop === undefined) {
       const rect = hud.getBoundingClientRect();
       hudLeft = rect.left;
@@ -601,7 +647,6 @@
   let initialLeft = 0;
   let initialTop = 0;
   let hasMoved = false;
-  let activePillClickTarget = "left";
 
   function onMouseDown(e) {
     if (e.button !== 0) return;
@@ -609,8 +654,6 @@
     hasMoved = false;
     startX = e.clientX;
     startY = e.clientY;
-
-    activePillClickTarget = e.target && e.target.closest && e.target.closest("#ere-hud-right") ? "right" : "left";
 
     const rect = hud.getBoundingClientRect();
     initialLeft = hud.style.left ? parseFloat(hud.style.left) : rect.left;
@@ -650,6 +693,9 @@
       };
 
       state.hudPosition = finalPos;
+      try {
+        localStorage.setItem("ere_hud_pos", JSON.stringify(finalPos));
+      } catch (e) {}
       // 1. Immediately persist to local storage for zero-latency survival across page refresh
       chrome.storage.local.set({ hudPosition: finalPos }).catch(() => {});
 
@@ -660,28 +706,7 @@
         y: finalPos.y
       }).catch(() => {});
     } else {
-      if (activePillClickTarget === "right" && !state.isPaused) {
-        let currentMode = state.hudDisplayMode || "total";
-        if (currentMode === "visits") currentMode = "unique";
-
-        let nextMode = "total";
-        if (currentMode === "total") {
-          nextMode = "unique";
-        } else if (currentMode === "unique") {
-          nextMode = "rank";
-        } else {
-          nextMode = "total";
-        }
-
-        state.hudDisplayMode = nextMode;
-        chrome.storage.local.set({ hudDisplayMode: nextMode });
-        updateHUD();
-        if (state.isModalOpen && state.activeTab === 3) {
-          renderModal();
-        }
-      } else {
-        toggleModal();
-      }
+      toggleModal();
     }
   }
 
@@ -754,7 +779,7 @@
   }
 
   function renderPrivacyList() {
-    const cutoff = Date.now() - (5 * 60 * 1000);
+    const cutoff = Date.now() - (60 * 60 * 1000);
     const rawItems = (state.privacyHistory || []).filter(item => item.time >= cutoff);
 
     // If domain is at the top/consecutive, edit it; otherwise add/preserve as a new record
@@ -766,7 +791,7 @@
     }
 
     if (items.length === 0) {
-      return `<div style="text-align: center; color: #64748b; font-size: 11.5px; padding: 24px 0;">No telemetry events in the last 5 minutes.</div>`;
+      return `<div style="text-align: center; color: #64748b; font-size: 11.5px; padding: 24px 0;">No telemetry events in the last 60 minutes.</div>`;
     }
     return items.map(item => {
       const cat = item.categoryId ? state.categories?.[item.categoryId] : null;
@@ -820,7 +845,7 @@
 
       <div class="ere-tabs-bar">
         <button class="ere-tab-btn ${state.activeTab === 1 ? 'is-active' : ''}" data-tab="1">Current URL</button>
-        <button class="ere-tab-btn ${state.activeTab === 2 ? 'is-active' : ''}" data-tab="2">Personal Stats</button>
+        <button class="ere-tab-btn ${state.activeTab === 2 ? 'is-active' : ''}" data-tab="2">Pillar Stats</button>
         <button class="ere-tab-btn ${state.activeTab === 3 ? 'is-active' : ''} ${!state.isUuidSaved ? 'ere-pulse-tab' : ''}" data-tab="3">Options</button>
         <button class="ere-tab-btn ${state.activeTab === 4 ? 'is-active' : ''}" data-tab="4">Privacy</button>
       </div>
@@ -846,15 +871,16 @@
                   <option value="2" ${state.submittingCurrentCatId === 2 ? 'selected' : ''}>2. Neurotechnology / Robotics & Automation</option>
                   <option value="3" ${state.submittingCurrentCatId === 3 ? 'selected' : ''}>3. Artificial Intelligence / Frontier Compute</option>
                   <option value="4" ${state.submittingCurrentCatId === 4 ? 'selected' : ''}>4. Space Exploration / Orbital & Deep Space</option>
-                  <option value="5" ${state.submittingCurrentCatId === 5 ? 'selected' : ''}>5. Energy Systems / Storage & Power</option>
-                  <option value="6" ${state.submittingCurrentCatId === 6 ? 'selected' : ''}>6. Investments / Financial Realities & Equities</option>
-                  <option value="7" ${(state.submittingCurrentCatId === 7 || (!state.submittingCurrentCatId && state.submittingCurrentCatId !== 0)) ? 'selected' : ''}>7. Crypto Ecosystem / Mining & Digital Assets</option>
-                  <option value="8" ${state.submittingCurrentCatId === 8 ? 'selected' : ''}>8. Digital Town Square / Media & Social</option>
+                  <option value="5" ${state.submittingCurrentCatId === 5 ? 'selected' : ''}>5. Politics (Reality)</option>
+                  <option value="6" ${state.submittingCurrentCatId === 6 ? 'selected' : ''}>6. Energy Systems / Storage & Power</option>
+                  <option value="7" ${state.submittingCurrentCatId === 7 ? 'selected' : ''}>7. Investments / Financial Realities & Equities</option>
+                  <option value="8" ${(state.submittingCurrentCatId === 8 || (!state.submittingCurrentCatId && state.submittingCurrentCatId !== 0)) ? 'selected' : ''}>8. Crypto Ecosystem / Mining & Digital Assets</option>
+                  <option value="9" ${state.submittingCurrentCatId === 9 ? 'selected' : ''}>9. Digital Town Square / Media & Social</option>
                   <option value="0" ${state.submittingCurrentCatId === 0 ? 'selected' : ''}>0. Exclude / Not Related to Elon Report</option>
                 </select>
               </div>
               <div style="display: flex; gap: 8px;">
-                <button class="ere-btn" id="ere-btn-submit-domain">${state.isReportMode ? 'Submit Report' : 'Submit'}</button>
+                <button class="ere-btn" id="ere-btn-submit-domain">ADD TO ADMIN QUEUE</button>
                 <button class="ere-btn secondary" id="ere-btn-cancel-submit" style="width: 35%;">Cancel</button>
               </div>
             </div>
@@ -918,7 +944,7 @@
                   </div>
                 ` : `
                   <div style="margin-top: 8px; font-size: 12px; color: #94a3b8; line-height: 1.5;">
-                    This domain is not in the active tracked database. <a class="ere-submit-link" id="ere-btn-start-submit">Submit now</a>
+                    This domain is not in the active tracked database. <a class="ere-submit-link" id="ere-btn-start-submit">Add to Admin Queue</a>
                   </div>
                 `}
               `}
@@ -986,7 +1012,7 @@
           </div>
 
           <div class="ere-card">
-            <div class="ere-card-header">Pillar Coverage Distribution</div>
+            <div class="ere-card-header">Pillar Stats</div>
             <div class="ere-bar-group">
               ${renderPillarBars()}
             </div>
@@ -994,6 +1020,43 @@
         </div>
 
         <div class="ere-tab-panel ${state.activeTab === 3 ? 'is-active' : ''}" id="ere-panel-3">
+          <div class="ere-card">
+            <div class="ere-card-header">
+              <span>INTERFACE PREFERENCES</span>
+              <button id="ere-btn-reset-hud" style="padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.06); color: #f8fafc; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; line-height: 1.4; text-transform: none;">
+                RESET GUI
+              </button>
+            </div>
+            <div class="ere-pill-display-selector" style="margin-top: 10px; margin-bottom: 12px;">
+              <button type="button" class="ere-pill-display-btn ${(!state.hudDisplayMode || state.hudDisplayMode === 'total') ? 'is-active' : ''}" data-mode="total" title="Total Visits for all tracked domains (default with live updates)">
+                Total Visits<br><span style="font-size: 9px; opacity: 0.8; font-weight: normal;">(Default - Live)</span>
+              </button>
+              <button type="button" class="ere-pill-display-btn ${(state.hudDisplayMode === 'unique' || state.hudDisplayMode === 'visits') ? 'is-active' : ''}" data-mode="unique" title="Unique visitors for current domain">
+                Unique Visitors<br><span style="font-size: 9px; opacity: 0.8; font-weight: normal;">(Current Domain)</span>
+              </button>
+              <button type="button" class="ere-pill-display-btn ${state.hudDisplayMode === 'rank' ? 'is-active' : ''}" data-mode="rank" title="Rank of the current domain in its category">
+                Domain Rank<br><span style="font-size: 9px; opacity: 0.8; font-weight: normal;">(Category #)</span>
+              </button>
+            </div>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.06); margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span class="ere-metric-label">Idle / Paused ERE Opacity</span>
+                <span class="ere-metric-val" id="ere-val-idle-opacity" style="color: #facc15; font-size: 12px; font-weight: 700;">${state.idleOpacity !== undefined ? state.idleOpacity : 100}%</span>
+              </div>
+              <input type="range" id="ere-slider-idle-opacity" min="0" max="100" value="${state.idleOpacity !== undefined ? state.idleOpacity : 100}" class="ere-range-slider" />
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.06);">
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: #f8fafc;">Bitcointalk Legacy Dark Theme</div>
+                <div style="font-size: 10.5px; color: #94a3b8;">Dark forum styling (bitcointalk.org only)</div>
+              </div>
+              <label class="ere-switch">
+                <input type="checkbox" id="ere-toggle-btt-dark" ${state.bitcointalkDarkTheme ? 'checked' : ''} />
+                <span class="ere-switch-slider"></span>
+              </label>
+            </div>
+          </div>
+
           ${state.isRestoringUuid ? `
             <div class="ere-card" style="border: 1px solid rgba(201, 162, 39, 0.45); background: rgba(201, 162, 39, 0.08); border-top: 2px solid #c9a227;">
               <div class="ere-card-header" style="color: #facc15;">
@@ -1063,51 +1126,6 @@
               <span class="ere-metric-val" id="ere-val-last-sync">${formatDate(state.lastSyncTime)}</span>
             </div>
           </div>
-
-          <div class="ere-card">
-            <div class="ere-card-header">
-              <span>INTERFACE PREFERENCES</span>
-              <button id="ere-btn-reset-hud" style="padding: 2px 8px; font-size: 10px; font-weight: 600; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.06); color: #f8fafc; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; line-height: 1.4; text-transform: none;">
-                RESET GUI
-              </button>
-            </div>
-            <div style="margin-top: 10px; margin-bottom: 12px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="ere-metric-label">Idle / Paused ERE Opacity</span>
-                <span class="ere-metric-val" id="ere-val-idle-opacity" style="color: #facc15; font-size: 12px; font-weight: 700;">${state.idleOpacity !== undefined ? state.idleOpacity : 100}%</span>
-              </div>
-              <input type="range" id="ere-slider-idle-opacity" min="0" max="100" value="${state.idleOpacity !== undefined ? state.idleOpacity : 100}" class="ere-range-slider" />
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.06);">
-              <div>
-                <div style="font-size: 12px; font-weight: 600; color: #f8fafc;">Bitcointalk Legacy Dark Theme</div>
-                <div style="font-size: 10.5px; color: #94a3b8;">Dark forum styling (bitcointalk.org only)</div>
-              </div>
-              <label class="ere-switch">
-                <input type="checkbox" id="ere-toggle-btt-dark" ${state.bitcointalkDarkTheme ? 'checked' : ''} />
-                <span class="ere-switch-slider"></span>
-              </label>
-            </div>
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.06);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="ere-metric-label">Pill Right Half Display</span>
-                <span class="ere-tag" style="color: #facc15; background: rgba(201, 162, 39, 0.15); font-size: 9.5px; padding: 1px 6px;">${
-                  state.hudDisplayMode === 'rank' ? 'Domain Rank' : (state.hudDisplayMode === 'unique' || state.hudDisplayMode === 'visits' ? 'Unique Visitors' : 'Total (Live)')
-                }</span>
-              </div>
-              <div class="ere-pill-display-selector">
-                <button type="button" class="ere-pill-display-btn ${(!state.hudDisplayMode || state.hudDisplayMode === 'total') ? 'is-active' : ''}" data-mode="total" title="Total Visits for all tracked domains (default with live updates)">
-                  Total Visits<br><span style="font-size: 9px; opacity: 0.8; font-weight: normal;">(Default - Live)</span>
-                </button>
-                <button type="button" class="ere-pill-display-btn ${(state.hudDisplayMode === 'unique' || state.hudDisplayMode === 'visits') ? 'is-active' : ''}" data-mode="unique" title="Unique visitors for current domain">
-                  Unique Visitors<br><span style="font-size: 9px; opacity: 0.8; font-weight: normal;">(Current Domain)</span>
-                </button>
-                <button type="button" class="ere-pill-display-btn ${state.hudDisplayMode === 'rank' ? 'is-active' : ''}" data-mode="rank" title="Rank of the current domain in its category">
-                  Domain Rank<br><span style="font-size: 9px; opacity: 0.8; font-weight: normal;">(Category #)</span>
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div class="ere-tab-panel ${state.activeTab === 4 ? 'is-active' : ''}" id="ere-panel-4">
@@ -1123,10 +1141,10 @@
 
           <div class="ere-card">
             <div class="ere-card-header">
-              <span>Domain Telemetry Log (5 Min)</span>
+              <span>Domain Telemetry Log (60 Min)</span>
             </div>
             <p style="margin: 6px 0 12px; font-size: 11.5px; color: #94a3b8; line-height: 1.45;">
-              Real-time display of root domains (no page paths) evaluated in the last five minutes. Only tracked root domains matching the 8 Pillars are sent to the server for merit scoring. Untracked domains, full URLs, and page paths exist only in the RAM of your machine.
+              Real-time display of root domains (no page paths) evaluated in the last 60 minutes. Only tracked root domains matching the 9 Pillars are sent to the server for merit scoring. Untracked domains, full URLs, and page paths exist only in the RAM of your machine.
             </p>
             <div class="ere-privacy-list" id="ere-privacy-list">
               ${renderPrivacyList()}
@@ -1272,8 +1290,6 @@
         }
       });
     });
-
-    attachPrivacySubmitListeners();
 
     const sliderEl = modal.querySelector("#ere-slider-idle-opacity");
     sliderEl?.addEventListener("input", (e) => {
@@ -1793,6 +1809,7 @@
     return Object.keys(state.categories).map((id) => {
       const cat = state.categories[id];
       const pts = counts[id] || 0;
+      const isOptional = parseInt(id, 10) === 5 || cat?.optional;
 
       let level = 1;
       let target = lvl2;
@@ -1819,11 +1836,11 @@
       return `
         <div class="ere-bar-item">
           <div class="ere-bar-header">
-            <span>P${id}: ${escapeHTML(cat.short)} (level ${level})</span>
-            <span style="font-weight: 700; color: #facc15;">${pts}/${target} (${pct}%)</span>
+            <span>P${id}: ${escapeHTML(cat.short)} ${isOptional ? '<em style="font-size: 9px; color: #c084fc; font-style: normal; font-weight: 700;">(Optional)</em>' : `(level ${level})`}</span>
+            <span style="font-weight: 700; color: ${isOptional ? '#c084fc' : '#facc15'};">${pts}/${target} (${pct}%)</span>
           </div>
           <div class="ere-bar-track">
-            <div class="ere-bar-fill" style="width: ${pct}%;"></div>
+            <div class="ere-bar-fill" style="width: ${pct}%; ${isOptional ? 'background: linear-gradient(90deg, #9333ea 0%, #c084fc 100%);' : ''}"></div>
           </div>
         </div>
       `;
@@ -1861,6 +1878,13 @@
       if (toggle) toggle.checked = msg.enabled;
     } else if (msg.type === "HUD_POS_CHANGED" || msg.type === "RESET_HUD_POSITION") {
       state.hudPosition = { x: msg.x !== undefined ? msg.x : null, y: msg.y !== undefined ? msg.y : null };
+      try {
+        if (state.hudPosition.x === null && state.hudPosition.y === null) {
+          localStorage.removeItem("ere_hud_pos");
+        } else {
+          localStorage.setItem("ere_hud_pos", JSON.stringify(state.hudPosition));
+        }
+      } catch (e) {}
       applyPosition(state.hudPosition);
       if (state.isModalOpen) positionModal();
     } else if (msg.type === "DOMAIN_COUNT_PREVIEW") {

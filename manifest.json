@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "The Elon Report Extension (ERE)",
-  "version": "1.2",
-  "description": "Merit-gated context tracking and intelligence across the 8 Elon Report Pillars.",
+  "version": "1.2.11",
+  "description": "Merit-gated context tracking and intelligence across the 9 Elon Report Pillars.",
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -55,14 +55,16 @@
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "128": "icons/icon128.png",
+    "512": "icons/icon512.png"
   },
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
       "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "128": "icons/icon128.png",
+      "512": "icons/icon512.png"
     },
     "default_title": "The Elon Report Extension (ERE)"
   }

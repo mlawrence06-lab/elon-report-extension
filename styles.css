@@ -17,11 +17,11 @@
   position: fixed;
   z-index: 2147483647;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: space-between;
   width: auto;
-  min-width: 80px;
-  max-width: 120px;
+  min-width: 84px;
+  max-width: 140px;
   height: 28px;
   padding: 0;
   box-sizing: border-box;
@@ -31,14 +31,15 @@
   border: 1px solid rgba(201, 162, 39, 0.35);
   border-radius: 7px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65), 0 0 10px rgba(201, 162, 39, 0.12);
-  cursor: grab;
+  cursor: pointer;
   user-select: none;
   touch-action: none;
   line-height: 1;
-  transition: opacity 0.25s ease, transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: opacity 0.25s ease, transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.15s ease;
 }
 
 .ere-hud-pill:hover {
+  background: rgba(20, 27, 45, 0.96);
   border-color: rgba(201, 162, 39, 0.75);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 0 14px rgba(201, 162, 39, 0.3);
   transform: translateY(-1px);
@@ -72,20 +73,16 @@
   align-items: center;
   justify-content: center;
   padding: 0 8px 0 10px;
+  height: 100%;
   cursor: pointer;
-  border-radius: 6px 0 0 6px;
-  transition: background 0.15s ease;
-}
-
-.ere-hud-left:hover {
-  background: rgba(201, 162, 39, 0.15);
 }
 
 .ere-hud-divider {
   width: 1px;
   height: 14px;
   align-self: center;
-  background: rgba(201, 162, 39, 0.22);
+  background: rgba(201, 162, 39, 0.25);
+  flex-shrink: 0;
 }
 
 .ere-hud-right {
@@ -94,14 +91,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 10px 0 6px;
+  padding: 0 10px 0 8px;
+  height: 100%;
   cursor: pointer;
-  border-radius: 0 6px 6px 0;
-  transition: background 0.15s ease;
-}
-
-.ere-hud-right:hover {
-  background: rgba(201, 162, 39, 0.15);
 }
 
 .ere-hud-indicator {
@@ -163,17 +155,37 @@
   align-items: center;
   justify-content: flex-end;
   text-align: right;
+  min-width: 6ch;
+  padding-left: 2ch;
   margin: 0;
-  padding: 0;
   transition: color 0.15s ease;
 }
 
-.ere-hud-right:hover .ere-hud-value {
+.ere-hud-pill:hover .ere-hud-value {
   color: #facc15;
 }
 
 .ere-hud-pill.is-paused .ere-hud-value {
   font-size: 11px;
+}
+
+.ere-hud-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  animation: ere-hud-spin 0.85s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes ere-hud-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .ere-hud-tooltip {
@@ -969,7 +981,7 @@
 .ere-privacy-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   max-height: 310px;
   overflow-y: auto;
   padding-right: 2px;
@@ -979,7 +991,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 5px 8px;
   background: rgba(15, 23, 42, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 6px;
@@ -991,12 +1003,14 @@
   font-weight: 700;
   color: #f8fafc;
   word-break: break-all;
+  font-size: 11.5px;
+  line-height: 1.25;
 }
 
 .ere-privacy-time {
-  font-size: 10.5px;
+  font-size: 10px;
   color: #64748b;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .ere-spinner {

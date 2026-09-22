@@ -9,16 +9,17 @@ export const CATEGORIES = {
   2: { id: 2, slug: "neuro-robotics", name: "Neurotechnology / Robotics & Automation", short: "Neuro / Robotics" },
   3: { id: 3, slug: "ai-compute", name: "Artificial Intelligence / Frontier Compute", short: "AI / Compute" },
   4: { id: 4, slug: "space-orbital", name: "Space Exploration / Orbital & Deep Space", short: "Space / Orbital" },
-  5: { id: 5, slug: "energy-storage", name: "Energy Systems / Storage & Power", short: "Energy / Grid" },
-  6: { id: 6, slug: "investments-equity", name: "Investments / Financial Realities & Equities", short: "Investments / TSLA" },
-  7: { id: 7, slug: "crypto-digital", name: "Crypto Ecosystem / Mining & Digital Assets", short: "Crypto / Mining" },
-  8: { id: 8, slug: "media-social", name: "Digital Town Square / Media & Social", short: "Media / X" }
+  5: { id: 5, slug: "politics", name: "Politics (Reality)", short: "Politics", optional: true },
+  6: { id: 6, slug: "energy-storage", name: "Energy Systems / Storage & Power", short: "Energy / Grid" },
+  7: { id: 7, slug: "investments-equity", name: "Investments / Financial Realities & Equities", short: "Investments / TSLA" },
+  8: { id: 8, slug: "crypto-digital", name: "Crypto Ecosystem / Mining & Digital Assets", short: "Crypto / Mining" },
+  9: { id: 9, slug: "media-social", name: "Digital Town Square / Media & Social", short: "Media / X" }
 };
 
 const volatilePrivacyLog = [];
 
 setInterval(() => {
-  const pruneCutoff = Date.now() - (5 * 60 * 1000);
+  const pruneCutoff = Date.now() - (60 * 60 * 1000);
   while (volatilePrivacyLog.length && volatilePrivacyLog[volatilePrivacyLog.length - 1].time < pruneCutoff) {
     volatilePrivacyLog.pop();
   }
@@ -50,15 +51,16 @@ let cachedGlobalTotal = 0;
 chrome.storage.local.get(["totalTrackedVisitors"], (res) => {
   if (res && res.totalTrackedVisitors) {
     const val = parseInt(res.totalTrackedVisitors, 10);
-    if (!isNaN(val) && val > cachedGlobalTotal) {
+    if (!isNaN(val) && val > 0) {
       cachedGlobalTotal = val;
     }
   }
+  fetchGlobalStats().catch(() => {});
 });
 
 function recordGlobalTotal(newTotal) {
   const n = parseInt(newTotal, 10);
-  if (!isNaN(n) && n > cachedGlobalTotal) {
+  if (!isNaN(n) && n > 0) {
     cachedGlobalTotal = n;
     lastFetchTime = Date.now();
     chrome.storage.local.set({ totalTrackedVisitors: n }).catch(() => {});
@@ -148,12 +150,12 @@ chrome.runtime.onInstalled.addListener(async () => {
     updates.personalStats = {
       totalPagesTracked: 0,
       meritPoints: 25,
-      pillarCounts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0 }
+      pillarCounts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0 }
     };
   }
 
   if (!data.pillarFilters) {
-    updates.pillarFilters = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true };
+    updates.pillarFilters = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true, 9: true };
   }
 
   if (!data.domainCount) {
@@ -179,7 +181,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
   fetchGlobalStats().catch(() => {});
   chrome.alarms.create(SYNC_ALARM_NAME, { periodInMinutes: 1440 });
-  await syncDomains();
+  syncDomains().catch(() => {});
 });
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
@@ -203,8 +205,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   }
 });
 
-chrome.runtime.onStartup.addListener(async () => {
-  await syncDomains();
+chrome.runtime.onStartup.addListener(() => {
+  syncDomains().catch(() => {});
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -213,20 +215,55 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
-function openDomainDB() {
+function openDomainDB(timeoutMs = 200) {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("ere_domain_db", 1);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains("domains")) {
-        db.createObjectStore("domains");
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error("IndexedDB timeout"));
       }
-      if (!db.objectStoreNames.contains("meta")) {
-        db.createObjectStore("meta");
+    }, timeoutMs);
+
+    try {
+      const req = indexedDB.open("ere_domain_db", 1);
+      req.onblocked = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error("IndexedDB blocked"));
+        }
+      };
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains("domains")) {
+          db.createObjectStore("domains");
+        }
+        if (!db.objectStoreNames.contains("meta")) {
+          db.createObjectStore("meta");
+        }
+      };
+      req.onsuccess = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(req.result);
+        }
+      };
+      req.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(req.error);
+        }
+      };
+    } catch (e) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(e);
       }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    }
   });
 }
 
@@ -364,10 +401,11 @@ const SUBREDDIT_MAP = {
   "neuralink": 2, "bci": 2, "robotics": 2, "humanoidrobots": 2, "cybernetics": 2,
   "xai": 3, "grok": 3, "openai": 3, "chatgpt": 3, "anthropic": 3, "claudeai": 3, "localllama": 3, "machinelearning": 3, "artificial": 3, "singularity": 3,
   "spacex": 4, "spacexlounge": 4, "starlink": 4, "space": 4, "nasa": 4, "astronomy": 4, "rocketry": 4,
-  "teslasolar": 5, "solar": 5, "renewableenergy": 5, "batteries": 5, "energy": 5,
-  "teslainvestorsclub": 6, "tsla": 6, "stocks": 6, "wallstreetbets": 6, "investing": 6, "options": 6, "valueinvesting": 6,
-  "bitcoin": 7, "dogecoin": 7, "cryptocurrency": 7, "cryptomarkets": 7, "btc": 7, "solana": 7, "ethereum": 7, "defi": 7,
-  "elonmusk": 8, "twitter": 8, "x_twitter": 8, "freespeech": 8
+  "politics": 5, "politicaldiscussion": 5, "geopolitics": 5, "neutralpolitics": 5,
+  "teslasolar": 6, "solar": 6, "renewableenergy": 6, "batteries": 6, "energy": 6,
+  "teslainvestorsclub": 7, "tsla": 7, "stocks": 7, "wallstreetbets": 7, "investing": 7, "options": 7, "valueinvesting": 7,
+  "bitcoin": 8, "dogecoin": 8, "cryptocurrency": 8, "cryptomarkets": 8, "btc": 8, "solana": 8, "ethereum": 8, "defi": 8,
+  "elonmusk": 9, "twitter": 9, "x_twitter": 9, "freespeech": 9
 };
 
 const SHARD_CACHE = new Map();
@@ -427,64 +465,7 @@ async function classifyUrlAsync(hostname, pathname) {
     return null;
   }
 
-  let isExcluded = false;
-  let idbMatch = null;
-  let idbRootMatch = null;
-
-  try {
-    const db = await openDomainDB();
-    await new Promise((resolve) => {
-      const tx = db.transaction(["domains", "meta"], "readonly");
-      const domStore = tx.objectStore("domains");
-      const metaStore = tx.objectStore("meta");
-
-      const metaReq = metaStore.get("excluded");
-      metaReq.onsuccess = () => {
-        const excludedArr = metaReq.result || [];
-        const excludedSet = new Set(excludedArr);
-        if (excludedSet.has(cleanHost)) {
-          isExcluded = true;
-          resolve();
-          return;
-        }
-
-        const domReq = domStore.get(cleanHost);
-        domReq.onsuccess = () => {
-          if (domReq.result !== undefined) {
-            idbMatch = domReq.result;
-            resolve();
-            return;
-          }
-          const parts = cleanHost.split(".");
-          if (parts.length > 2) {
-            const rootDomain = parts.slice(-2).join(".");
-            if (excludedSet.has(rootDomain)) {
-              isExcluded = true;
-              resolve();
-              return;
-            }
-            const rootReq = domStore.get(rootDomain);
-            rootReq.onsuccess = () => {
-              if (rootReq.result !== undefined) {
-                idbRootMatch = rootReq.result;
-              }
-              resolve();
-            };
-            rootReq.onerror = () => resolve();
-          } else {
-            resolve();
-          }
-        };
-        domReq.onerror = () => resolve();
-      };
-      metaReq.onerror = () => resolve();
-    });
-  } catch (err) {}
-
-  if (isExcluded) return null;
-  if (idbMatch !== null && idbMatch !== undefined) return idbMatch;
-  if (idbRootMatch !== null && idbRootMatch !== undefined) return idbRootMatch;
-
+  // 1. Fast path: Check bundled shards first (instant < 1ms, zero lock)
   const bundledDirect = await lookupBundledShard(cleanHost);
   if (bundledDirect !== null && bundledDirect !== undefined) return bundledDirect;
 
@@ -494,6 +475,78 @@ async function classifyUrlAsync(hostname, pathname) {
     const bundledRoot = await lookupBundledShard(rootDomain);
     if (bundledRoot !== null && bundledRoot !== undefined) return bundledRoot;
   }
+
+  // 2. Fallback to IndexedDB (for dynamically synced domains or excluded domains)
+  let isExcluded = false;
+  let idbMatch = null;
+  let idbRootMatch = null;
+
+  try {
+    const db = await openDomainDB(100);
+    await new Promise((resolve) => {
+      let isDone = false;
+      const done = () => {
+        if (!isDone) {
+          isDone = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      const timer = setTimeout(done, 80);
+
+      try {
+        const tx = db.transaction(["domains", "meta"], "readonly");
+        const domStore = tx.objectStore("domains");
+        const metaStore = tx.objectStore("meta");
+
+        const metaReq = metaStore.get("excluded");
+        metaReq.onsuccess = () => {
+          const excludedArr = metaReq.result || [];
+          const excludedSet = new Set(excludedArr);
+          if (excludedSet.has(cleanHost)) {
+            isExcluded = true;
+            done();
+            return;
+          }
+
+          const domReq = domStore.get(cleanHost);
+          domReq.onsuccess = () => {
+            if (domReq.result !== undefined) {
+              idbMatch = domReq.result;
+              done();
+              return;
+            }
+            if (parts.length > 2) {
+              const rootDomain = parts.slice(-2).join(".");
+              if (excludedSet.has(rootDomain)) {
+                isExcluded = true;
+                done();
+                return;
+              }
+              const rootReq = domStore.get(rootDomain);
+              rootReq.onsuccess = () => {
+                if (rootReq.result !== undefined) {
+                  idbRootMatch = rootReq.result;
+                }
+                done();
+              };
+              rootReq.onerror = () => done();
+            } else {
+              done();
+            }
+          };
+          domReq.onerror = () => done();
+        };
+        metaReq.onerror = () => done();
+      } catch (txErr) {
+        done();
+      }
+    });
+  } catch (err) {}
+
+  if (isExcluded) return null;
+  if (idbMatch !== null && idbMatch !== undefined) return idbMatch;
+  if (idbRootMatch !== null && idbRootMatch !== undefined) return idbRootMatch;
 
   return null;
 }
@@ -524,7 +577,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         ]);
 
         if (!data.domainCount) {
-          syncDomains();
+          syncDomains().catch(() => {});
+        }
+
+        if (!cachedGlobalTotal) {
+          try {
+            await Promise.race([
+              fetchGlobalStats(),
+              new Promise((r) => setTimeout(r, 600))
+            ]);
+          } catch (e) {}
         }
 
         const cleanHost = (msg.hostname || "").toLowerCase().replace(/^www\./, "");
@@ -547,7 +609,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           hudPosition: data.hudPosition || { x: null, y: null },
           idleOpacity: data.idleOpacity !== undefined ? data.idleOpacity : 100,
           bitcointalkDarkTheme: !!data.bitcointalkDarkTheme,
-          privacyHistory: volatilePrivacyLog.filter(item => Date.now() - item.time < 5 * 60 * 1000),
+          privacyHistory: volatilePrivacyLog.filter(item => Date.now() - item.time < 60 * 60 * 1000),
           category,
           categoryId,
           ranking: cachedRanking || { rank: 1, unique_visitors_24h: 1, total_category_domains_24h: 1, total_category_urls_24h: 1 },
@@ -557,7 +619,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           totalDomains: data.domainCount || 1377451,
           categories: CATEGORIES,
           levelThresholds: data.levelThresholds || { level_2: 10, level_3: 100, level_4: 1000 },
-          version: chrome.runtime?.getManifest?.()?.version || "1.2"
+          version: chrome.runtime?.getManifest?.()?.version || "1.2.11"
         });
         break;
       }
@@ -738,8 +800,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               categoryId: catId
             });
           }
-          const pruneCutoff = now - (5 * 60 * 1000);
-          while (volatilePrivacyLog.length > 50 || (volatilePrivacyLog.length > 0 && volatilePrivacyLog[volatilePrivacyLog.length - 1].time < pruneCutoff)) {
+          const pruneCutoff = now - (60 * 60 * 1000);
+          while (volatilePrivacyLog.length > 250 || (volatilePrivacyLog.length > 0 && volatilePrivacyLog[volatilePrivacyLog.length - 1].time < pruneCutoff)) {
             volatilePrivacyLog.pop();
           }
 
@@ -827,8 +889,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
           }
         }
-        const pruneCutoff = Date.now() - (5 * 60 * 1000);
-        while (volatilePrivacyLog.length > 50 || (volatilePrivacyLog.length > 0 && volatilePrivacyLog[volatilePrivacyLog.length - 1].time < pruneCutoff)) {
+        const pruneCutoff = Date.now() - (60 * 60 * 1000);
+        while (volatilePrivacyLog.length > 250 || (volatilePrivacyLog.length > 0 && volatilePrivacyLog[volatilePrivacyLog.length - 1].time < pruneCutoff)) {
           volatilePrivacyLog.pop();
         }
         sendResponse({ ok: true });
@@ -836,7 +898,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       case "GET_PRIVACY_LOG": {
-        const pruneCutoff = Date.now() - (5 * 60 * 1000);
+        const pruneCutoff = Date.now() - (60 * 60 * 1000);
         while (volatilePrivacyLog.length && volatilePrivacyLog[volatilePrivacyLog.length - 1].time < pruneCutoff) {
           volatilePrivacyLog.pop();
         }
